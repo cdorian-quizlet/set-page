@@ -1924,9 +1924,10 @@ ul {
     display: flex;
     align-items: center;
     gap: var(--spacing-xxs);
-    font-size: 13px;
-    font-weight: 500;
+    font-size: var(--ref-typography-size-subheading-four);
+    font-weight: var(--ref-typography-weight-subheader);
     color: var(--text-secondary);
+    line-height: var(--ref-typography-line-height-subheading-four);
 }
 
 .stat-item .material-symbols-rounded {
