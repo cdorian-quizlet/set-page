@@ -268,7 +268,7 @@ const elements = {
 function init() {
     loadDesignVariant();
     loadSavedContent();
-    updateCard();
+    updateCard(false); // Don't auto-expand on initial load
     attachEventListeners();
     loadSavedState();
     initPanelResize();
@@ -279,8 +279,9 @@ function init() {
 
 /**
  * Update the flashcard display
+ * @param {boolean} autoExpand - Whether to auto-expand the TOC section (default: true)
  */
-function updateCard() {
+function updateCard(autoExpand = true) {
     const card = flashcards[state.currentIndex];
     
     // Update card content
@@ -299,8 +300,8 @@ function updateCard() {
     // Trigger animation
     animateCardChange();
     
-    // Sync sidebar highlight with current card (auto-expand when navigating)
-    updateActiveTocItem(true);
+    // Sync sidebar highlight with current card
+    updateActiveTocItem(autoExpand);
 }
 
 /**
