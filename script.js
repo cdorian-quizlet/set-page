@@ -229,7 +229,8 @@ const state = {
     currentIndex: 0,
     isFlipped: false,
     starredCards: new Set(),
-    showingTerm: true // true = showing term (front), false = showing definition (back)
+    showingTerm: true, // true = showing term (front), false = showing definition (back)
+    hasEngagedWithStudy: false // Track if user has engaged with study experience
 };
 
 // ============================================
@@ -520,7 +521,8 @@ function handleSwipe() {
 function saveState() {
     const stateToSave = {
         starredCards: Array.from(state.starredCards),
-        currentIndex: state.currentIndex
+        currentIndex: state.currentIndex,
+        hasEngagedWithStudy: state.hasEngagedWithStudy
     };
     localStorage.setItem('flashcardState', JSON.stringify(stateToSave));
 }
@@ -531,6 +533,7 @@ function loadSavedState() {
         try {
             const parsed = JSON.parse(saved);
             state.starredCards = new Set(parsed.starredCards || []);
+            state.hasEngagedWithStudy = parsed.hasEngagedWithStudy || false;
             // Optionally restore position
             // state.currentIndex = parsed.currentIndex || 0;
             updateStarButton();
@@ -538,6 +541,15 @@ function loadSavedState() {
             console.error('Error loading saved state:', e);
         }
     }
+    
+    // Load viewed cards for progress display
+    const savedViewed = localStorage.getItem('studyModeViewed');
+    if (savedViewed) {
+        studyModeState.viewedCards = new Set(JSON.parse(savedViewed));
+    }
+    
+    // Update sidebar progress view based on engagement
+    updateSidebarProgressView();
 }
 
 /**
@@ -1621,6 +1633,13 @@ function resetStudyProgress() {
     localStorage.removeItem('starredCards');
     state.starredCards = new Set();
     
+    // Reset engagement state
+    state.hasEngagedWithStudy = false;
+    saveState();
+    
+    // Update sidebar progress view
+    updateSidebarProgressView();
+    
     // Update UI if study mode is open
     if (document.getElementById('study-mode-screen')?.classList.contains('active')) {
         updateStudyModeProgress();
@@ -1628,8 +1647,8 @@ function resetStudyProgress() {
         updateStudyModeCard();
     }
     
-    // Update main UI
-    updateTopicsList(flashcards);
+    // Refresh topics list (will show non-progress view)
+    refreshTopicsList();
     
     // Show confirmation
     alert('Study progress has been reset.');
@@ -1790,6 +1809,70 @@ function updateAboutDescription(description) {
 }
 
 /**
+ * Update the sidebar to show progress view when engaged
+ */
+function updateSidebarProgressView() {
+    const setMeta = document.getElementById('sidebar-set-meta');
+    const progressView = document.getElementById('sidebar-progress-view');
+    
+    if (!setMeta || !progressView) return;
+    
+    if (state.hasEngagedWithStudy) {
+        // Hide metadata, show progress
+        setMeta.style.display = 'none';
+        progressView.style.display = 'block';
+        
+        // Calculate overall progress
+        updateSidebarProgress();
+    } else {
+        // Show metadata, hide progress
+        setMeta.style.display = 'flex';
+        progressView.style.display = 'none';
+    }
+}
+
+/**
+ * Update the sidebar progress bar
+ */
+function updateSidebarProgress() {
+    const fillEl = document.getElementById('sidebar-progress-fill');
+    const textEl = document.getElementById('sidebar-progress-text');
+    
+    if (!fillEl || !textEl) return;
+    
+    // Get viewed cards from studyModeState
+    const total = flashcards.length;
+    const viewed = studyModeState.viewedCards ? studyModeState.viewedCards.size : 0;
+    const percent = total > 0 ? Math.round((viewed / total) * 100) : 0;
+    
+    fillEl.style.width = `${percent}%`;
+    textEl.textContent = `${percent}% complete`;
+}
+
+/**
+ * Calculate progress for a specific group
+ */
+function getGroupProgress(cardIndices) {
+    if (!studyModeState.viewedCards || cardIndices.length === 0) return 0;
+    
+    let viewed = 0;
+    cardIndices.forEach(index => {
+        if (studyModeState.viewedCards.has(index)) {
+            viewed++;
+        }
+    });
+    
+    return Math.round((viewed / cardIndices.length) * 100);
+}
+
+/**
+ * Check if a card is known (viewed)
+ */
+function isCardKnown(cardIndex) {
+    return studyModeState.viewedCards && studyModeState.viewedCards.has(cardIndex);
+}
+
+/**
  * Show loading state in the TOC while AI is grouping
  */
 function showTocLoading() {
@@ -1808,9 +1891,14 @@ function updateTopicsList(cards) {
     // Clear existing topics
     elements.topicsContainer.innerHTML = '';
     
+    const isProgressView = state.hasEngagedWithStudy;
+    
     // Create a single topic section with all the terms
     const topicSection = document.createElement('div');
     topicSection.className = 'topic-section';
+    if (isProgressView) {
+        topicSection.classList.add('progress-view');
+    }
     
     // Create header
     const topicHeader = document.createElement('div');
@@ -1818,6 +1906,14 @@ function updateTopicsList(cards) {
     topicHeader.addEventListener('click', () => {
         topicSection.classList.toggle('collapsed');
     });
+    
+    // Add progress ring if in progress view
+    if (isProgressView) {
+        const allIndices = cards.map((_, i) => i);
+        const progressPercent = getGroupProgress(allIndices);
+        const progressRing = createProgressRing(progressPercent, 24);
+        topicHeader.appendChild(progressRing);
+    }
     
     const topicTitle = document.createElement('h2');
     topicTitle.className = 'topic-title';
@@ -1837,7 +1933,7 @@ function updateTopicsList(cards) {
     
     // Add each card
     cards.forEach((card, index) => {
-        const termCard = createTermCard(card, index);
+        const termCard = createTermCard(card, index, isProgressView);
         topicCards.appendChild(termCard);
     });
     
@@ -1846,6 +1942,11 @@ function updateTopicsList(cards) {
     
     // Set the first item as active
     updateActiveTocItem();
+    
+    // Update sidebar progress
+    if (isProgressView) {
+        updateSidebarProgress();
+    }
 }
 
 /**
@@ -1903,9 +2004,14 @@ function updateGroupedTopicsList(cards, groups) {
     // Clear existing topics
     elements.topicsContainer.innerHTML = '';
     
+    const isProgressView = state.hasEngagedWithStudy;
+    
     groups.forEach((group, groupIndex) => {
         const topicSection = document.createElement('div');
         topicSection.className = 'topic-section collapsed';
+        if (isProgressView) {
+            topicSection.classList.add('progress-view');
+        }
         // All sections collapsed by default
         
         // Create clickable header with title and toggle icon
@@ -1924,6 +2030,13 @@ function updateGroupedTopicsList(cards, groups) {
                 topicSection.classList.remove('collapsed');
             }
         });
+        
+        // Add progress ring if in progress view
+        if (isProgressView) {
+            const progressPercent = getGroupProgress(group.cardIndices);
+            const progressRing = createProgressRing(progressPercent, 24);
+            topicHeader.appendChild(progressRing);
+        }
         
         const topicTitle = document.createElement('h2');
         topicTitle.className = 'topic-title';
@@ -1945,7 +2058,7 @@ function updateGroupedTopicsList(cards, groups) {
         group.cardIndices.forEach(cardIndex => {
             if (cardIndex >= 0 && cardIndex < cards.length) {
                 const card = cards[cardIndex];
-                const termCard = createTermCard(card, cardIndex);
+                const termCard = createTermCard(card, cardIndex, isProgressView);
                 topicCards.appendChild(termCard);
             }
         });
@@ -1956,25 +2069,84 @@ function updateGroupedTopicsList(cards, groups) {
     
     // Set the first item as active
     updateActiveTocItem();
+    
+    // Update sidebar progress
+    if (isProgressView) {
+        updateSidebarProgress();
+    }
+}
+
+/**
+ * Create a progress ring SVG element
+ */
+function createProgressRing(percent, size = 24) {
+    const strokeWidth = 3;
+    const radius = (size - strokeWidth) / 2;
+    const circumference = 2 * Math.PI * radius;
+    const offset = circumference - (percent / 100) * circumference;
+    
+    const container = document.createElement('div');
+    container.className = 'sidebar-progress-ring';
+    container.innerHTML = `
+        <svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
+            <circle 
+                class="progress-ring-bg" 
+                cx="${size/2}" 
+                cy="${size/2}" 
+                r="${radius}" 
+                fill="none" 
+                stroke-width="${strokeWidth}"
+            />
+            <circle 
+                class="progress-ring-fill" 
+                cx="${size/2}" 
+                cy="${size/2}" 
+                r="${radius}" 
+                fill="none" 
+                stroke-width="${strokeWidth}"
+                stroke-dasharray="${circumference}"
+                stroke-dashoffset="${offset}"
+                transform="rotate(-90 ${size/2} ${size/2})"
+            />
+        </svg>
+    `;
+    
+    return container;
 }
 
 /**
  * Create a term card element with audio and star buttons
+ * @param {Object} card - The flashcard data
+ * @param {number} cardIndex - Index of the card
+ * @param {boolean} isProgressView - Whether to show progress status
  */
-function createTermCard(card, cardIndex) {
+function createTermCard(card, cardIndex, isProgressView = false) {
     const termCard = document.createElement('div');
     termCard.className = 'term-card';
+    if (isProgressView) {
+        termCard.classList.add('progress-view');
+    }
     termCard.dataset.index = cardIndex;
     
-    // Audio button
-    const audioBtn = document.createElement('button');
-    audioBtn.className = 'term-audio-btn';
-    audioBtn.setAttribute('aria-label', 'Play audio');
-    audioBtn.innerHTML = `<span class="material-symbols-rounded">volume_up</span>`;
-    audioBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        playTermAudio(card.term, card.definition, audioBtn);
-    });
+    // Progress status icon (shown in progress view)
+    if (isProgressView) {
+        const isKnown = isCardKnown(cardIndex);
+        const statusIcon = document.createElement('div');
+        statusIcon.className = `term-status-icon ${isKnown ? 'known' : 'learning'}`;
+        statusIcon.innerHTML = `<span class="material-symbols-rounded">${isKnown ? 'check_circle' : 'remove'}</span>`;
+        termCard.appendChild(statusIcon);
+    } else {
+        // Audio button (only in non-progress view)
+        const audioBtn = document.createElement('button');
+        audioBtn.className = 'term-audio-btn';
+        audioBtn.setAttribute('aria-label', 'Play audio');
+        audioBtn.innerHTML = `<span class="material-symbols-rounded">volume_up</span>`;
+        audioBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            playTermAudio(card.term, card.definition, audioBtn);
+        });
+        termCard.appendChild(audioBtn);
+    }
     
     // Content (term + definition)
     const content = document.createElement('div');
@@ -1996,6 +2168,7 @@ function createTermCard(card, cardIndex) {
     
     content.appendChild(termTitle);
     content.appendChild(termDefinition);
+    termCard.appendChild(content);
     
     // Star button
     const starBtn = document.createElement('button');
@@ -2009,9 +2182,6 @@ function createTermCard(card, cardIndex) {
         e.stopPropagation();
         toggleTermStar(cardIndex, starBtn);
     });
-    
-    termCard.appendChild(audioBtn);
-    termCard.appendChild(content);
     termCard.appendChild(starBtn);
     
     return termCard;
@@ -3094,6 +3264,14 @@ function openStudyModeScreenWithGroup(groupIndex = 'all', mode = 'flashcards') {
     screen.classList.add('active');
     document.body.style.overflow = 'hidden';
     
+    // Mark user as engaged with study experience
+    if (!state.hasEngagedWithStudy) {
+        state.hasEngagedWithStudy = true;
+        saveState();
+        updateSidebarProgressView();
+        refreshTopicsList(); // Refresh to show progress view
+    }
+    
     // Update UI
     updateStudyModeTitle();
     populateGroupDropdown();
@@ -3319,6 +3497,12 @@ function closeStudyModeScreen() {
         
         // Save viewed cards
         localStorage.setItem('studyModeViewed', JSON.stringify([...studyModeState.viewedCards]));
+        
+        // Refresh sidebar to show updated progress
+        if (state.hasEngagedWithStudy) {
+            refreshTopicsList();
+            updateSidebarProgress();
+        }
     }
 }
 
@@ -3474,6 +3658,9 @@ function updateStudyModeProgress() {
     
     if (fillEl) fillEl.style.width = `${percent}%`;
     if (textEl) textEl.textContent = `${percent}% Complete`;
+    
+    // Also update sidebar progress
+    updateSidebarProgress();
 }
 
 /**
